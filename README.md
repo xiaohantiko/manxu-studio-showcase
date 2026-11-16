@@ -21,3 +21,9 @@ npm start
 ```
 
 运行逻辑检查：`npm run check`。
+
+## 下载安装
+
+[下载最新公开版本与 SHA-256 校验文件](https://github.com/xiaohantiko/manxu-studio-showcase/releases/latest)
+
+macOS 发布包使用临时签名，尚未通过 Apple 公证。

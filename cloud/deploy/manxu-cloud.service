@@ -1,0 +1,29 @@
+[Unit]
+Description=Manxu private model and backup service
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/manxu-cloud/backups
+
+[Service]
+Type=simple
+User=manxu-cloud
+Group=manxu-cloud
+WorkingDirectory=/opt/manxu-cloud
+EnvironmentFile=/etc/manxu-cloud/service.env
+ExecStart=/usr/bin/node /opt/manxu-cloud/cloud/server.mjs
+Restart=on-failure
+RestartSec=5
+StateDirectory=manxu-cloud
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/manxu-cloud
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+TimeoutStopSec=330
+
+[Install]
+WantedBy=multi-user.target

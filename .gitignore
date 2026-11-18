@@ -8,3 +8,10 @@ private/
 .env*
 *.log
 .DS_Store
+*.manxu
+*.key
+*.pem
+*.enc
+*.dmg
+cloud-backup-setup.json
+__pycache__/

@@ -1,0 +1,4 @@
+# Import inside the chosen site's existing HTTPS block.
+handle_path /manxu/* {
+    reverse_proxy 127.0.0.1:8787
+}

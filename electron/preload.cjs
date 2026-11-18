@@ -1,7 +1,23 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("studio", {
+  adminStatus: () => ipcRenderer.invoke("admin:status"),
+  adminCreate: (data) => ipcRenderer.invoke("admin:create", data),
+  adminLogin: (data) => ipcRenderer.invoke("admin:login", data),
+  adminLogout: () => ipcRenderer.invoke("admin:logout"),
+  adminChangePassword: (data) => ipcRenderer.invoke("admin:password", data),
+  getSettings: () => ipcRenderer.invoke("settings:get"),
+  saveSettings: (data) => ipcRenderer.invoke("settings:save", data),
+  disconnect: () => ipcRenderer.invoke("settings:disconnect"),
+  saveBackupSettings: (data) => ipcRenderer.invoke("settings:backup-save", data),
+  testBackupSettings: () => ipcRenderer.invoke("settings:backup-test"),
+  removeBackupSettings: () => ipcRenderer.invoke("settings:backup-remove"),
+  generate: (data) => ipcRenderer.invoke("ai:generate", data),
+  testConnection: () => ipcRenderer.invoke("ai:test"),
   loadWorkspace: (legacy) => ipcRenderer.invoke("workspace:load", legacy),
   saveWorkspace: (data) => ipcRenderer.invoke("workspace:save", data),
   exportFile: (data) => ipcRenderer.invoke("file:export", data),
+  uploadBackup: (ciphertext) => ipcRenderer.invoke("backup:upload", ciphertext),
+  listBackups: () => ipcRenderer.invoke("backup:list"),
+  downloadBackup: (id) => ipcRenderer.invoke("backup:download", id),
   platform: process.platform,
 });

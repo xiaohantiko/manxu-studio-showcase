@@ -1,0 +1,11 @@
+**
+!cloud/
+!cloud/Dockerfile
+!cloud/package.json
+!cloud/package-lock.json
+!cloud/server.mjs
+!cloud/storage.mjs
+!services/
+!services/api.cjs
+!src/
+!src/portable.js

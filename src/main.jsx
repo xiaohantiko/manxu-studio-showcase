@@ -1,3 +1,5 @@
+import {version as appVersion} from "../package.json";
+import AdminSettings from "./AdminSettings";
 import ExportDialog from "./ExportDialog";
 import {
   decryptPortable,
@@ -22,6 +24,7 @@ import {
   IdentificationCard,
   FilmStrip,
   BookOpen,
+  Plugs,
   Plus,
   ArrowUpRight,
   ArrowRight,
@@ -52,6 +55,9 @@ import {
   VideoCamera,
   Stack,
   SidebarSimple,
+  SignOut,
+  ShieldCheck,
+  UserCircle,
 } from "@phosphor-icons/react";
 import {
   asset,
@@ -64,7 +70,10 @@ import {
   demoAnalysis,
 } from "./data";
 import {
+  buildPrompt,
+  buildExercisePrompt,
   demoPrompt,
+  parseExercise,
   validateProject,
   extractFrames,
 } from "./logic";
@@ -192,12 +201,14 @@ function App() {
 }
 function StudioApp({ startingState }) {
   const [state, setState] = useState(startingState),
-    [route, setRoute] = useState("home"),
+    [route, setRoute] = useState(window.studio && location.hash === "#settings" ? "settings" : "home"),
     [toast, setToast] = useState(""),
     [modal, setModal] = useState(null),
     [passwordTask, setPasswordTask] = useState(null),
     [openedText, setOpenedText] = useState(null),
     [command, setCommand] = useState(false),
+    [demo, setDemo] = useState(true),
+    [settings, setSettings] = useState({ hasKey: false, apiAvailable: false }),
     [storageStatus, setStorageStatus] = useState("saved"),
     [retryStorage, setRetryStorage] = useState(0);
   const current =
@@ -219,6 +230,15 @@ function StudioApp({ startingState }) {
       currentSave = false;
     };
   }, [state, retryStorage]);
+  useEffect(() => {
+    if (window.studio)
+      nativeCall("getSettings")
+        .then((s) => {
+          setSettings(s);
+          setDemo(!(s.hasKey && s.apiAvailable));
+        })
+        .catch((e) => setToast(e.message));
+  }, []);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(""), 3800);
@@ -261,7 +281,7 @@ function StudioApp({ startingState }) {
     setRoute(r);
     setCommand(false);
   };
-  const exportText = (name, text, kind = "text") => {
+  const exportText = (name, text, kind = "text", deliver) => {
     setPasswordTask({
       mode: "encrypt",
       submit: async (password) => {
@@ -269,7 +289,9 @@ function StudioApp({ startingState }) {
           JSON.stringify({ kind, name, text }),
           password,
         );
-        if (window.studio) {
+        if (deliver) {
+          await deliver(encrypted);
+        } else if (window.studio) {
           const result = await nativeCall("exportFile", encrypted);
           if (!result.canceled) setToast("加密文件已保存");
         } else {
@@ -314,6 +336,15 @@ function StudioApp({ startingState }) {
       setToast("复制失败，请选中文本后按 ⌘C。");
     }
   };
+  const generate = async (payload, demoText) => {
+    if (demo) {
+      await new Promise((r) => setTimeout(r, 650));
+      return { text: demoText };
+    }
+    if (!settings.hasKey) throw new Error("请先连接模型，或切换至演示模式。");
+    if (!window.studio) throw new Error("真实模型调用需要打开 Mac App。");
+    return nativeCall("generate", payload);
+  };
   const ctx = {
     state,
     setState,
@@ -326,6 +357,11 @@ function StudioApp({ startingState }) {
     setToast,
     modal,
     setModal,
+    demo,
+    setDemo,
+    settings,
+    setSettings,
+    generate,
     exportText,
     openEncrypted,
     copy,
@@ -388,12 +424,22 @@ function StudioApp({ startingState }) {
             </span>
           </button>
           <div className="sidebar-bottom">
+            <button
+              className={`nav-item ${route === "settings" ? "active" : ""}`}
+              onClick={() => navigate("settings")}
+            >
+              <Plugs size={19} />
+              <span>管理后台</span>
+              <span
+                className={`connection-dot ${settings.hasKey ? "connected" : ""}`}
+              />
+            </button>
             <div className="profile">
               <span className="avatar">创</span>
               <div>
                 独立创作者<small>本地工作空间</small>
               </div>
-              <span className="version">v0.3</span>
+              <span className="version">v{appVersion}</span>
             </div>
           </div>
         </aside>
@@ -401,7 +447,7 @@ function StudioApp({ startingState }) {
           <header className="topbar">
             <div className="breadcrumb">
               创作空间 <CaretRight size={12} />
-              <span>{nav.find((n) => n[0] === route)?.[1] || "工作台"}</span>
+              <span>{nav.find((n) => n[0] === route)?.[1] || "管理后台"}</span>
             </div>
             <div className="topbar-right">
               <button
@@ -412,7 +458,15 @@ function StudioApp({ startingState }) {
                 <span>搜索功能与教程</span>
                 <kbd>⌘ K</kbd>
               </button>
-              <span className="mode-pill">本地版</span>
+              <button
+                className={`mode-pill ${!demo ? "live" : ""}`}
+                onClick={() => setDemo(!demo)}
+                title="切换本地演示和 API 模式"
+              >
+                <span />
+                {demo ? "演示模式" : "API 模式"}
+                <CaretDown size={11} />
+              </button>
             </div>
           </header>
           <main className={`main-content page-${route}`}>
@@ -436,8 +490,14 @@ function StudioApp({ startingState }) {
                   <Storyboard />
                 ) : route === "analysis" ? (
                   <Analysis />
-                ) : (
+                ) : route === "learn" ? (
                   <Learn />
+                ) : (
+                  <AdminSettings
+                    studio={ctx}
+                    ui={{ PageHeading, Field, Button, nativeCall }}
+                    Settings={Settings}
+                  />
                 )}
               </motion.div>
             </AnimatePresence>
@@ -527,7 +587,7 @@ function Home() {
       <PageHeading
         eyebrow="YOUR CREATIVE WORKSPACE"
         title="开始你的下一幕。"
-        description="从故事出发，用角色卡和分镜安排每一幕。"
+        description="从灵感到分镜，和 AI 一起把故事讲出来。"
       >
         <Button kind="primary" icon={Plus} onClick={() => setModal("project")}>
           新建漫剧项目
@@ -677,10 +737,13 @@ function Home() {
           <strong>灵感属于你，创作也属于你。</strong>
           <span>
             {window.studio
-              ? "项目加密保存在本机。可从项目空间导出备份。"
+              ? "项目加密保存在本机。连接 API 后再开始真实生成。"
               : "浏览器预览不自动保存，请使用加密导出保留你的创作。"}
           </span>
         </div>
+        <button onClick={() => navigate("settings")}>
+          配置模型 <ArrowUpRight size={15} />
+        </button>
       </div>
     </>
   );
@@ -807,6 +870,14 @@ function Projects() {
   } = useStudio();
   const file = useRef();
   const [query, setQuery] = useState("");
+  const { settings } = useStudio();
+  function exportProject(deliver) {
+    const project = {
+      schema: 1, projects: [current], roles: workspace.roles, shots: workspace.shots,
+      prompt: workspace.prompt, history: workspace.history, referenceReport: workspace.referenceReport,
+    };
+    exportText(current.name + ".json", JSON.stringify(project, null, 2), "project", deliver);
+  }
   function addImportedProject(text) {
     const d = validateProject(JSON.parse(text));
     const source = d.projects[0];
@@ -945,25 +1016,7 @@ function Projects() {
         <div>
           <Button
             icon={Download}
-            onClick={() =>
-              exportText(
-                `${current.name}.json`,
-                JSON.stringify(
-                  {
-                    schema: 1,
-                    projects: [current],
-                    roles: workspace.roles,
-                    shots: workspace.shots,
-                    prompt: workspace.prompt,
-                    history: workspace.history,
-                    referenceReport: workspace.referenceReport,
-                  },
-                  null,
-                  2,
-                ),
-                "project",
-              )
-            }
+            onClick={() => exportProject()}
           >
             加密导出备份
           </Button>
@@ -972,7 +1025,55 @@ function Projects() {
           </Button>
         </div>
       </section>
+      {settings.cloudBackups && (
+        <CloudBackups exportProject={exportProject} openBackup={(data) => openEncrypted(data, addImportedProject)} />
+      )}
     </>
+  );
+}
+function CloudBackups({ exportProject, openBackup }) {
+  const { setToast } = useStudio();
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function load(id) {
+    setBusy(true);
+    setError("");
+    try {
+      if (id) openBackup(await nativeCall("downloadBackup", id));
+      else setRows(await nativeCall("listBackups"));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function upload() {
+    exportProject(async (ciphertext) => {
+      const record = await nativeCall("uploadBackup", ciphertext);
+      setRows((previous) => previous && [record, ...previous.filter((row) => row.id !== record.id)]);
+      setToast("已将加密项目上传至腾讯云");
+    });
+  }
+  return (
+    <section className="settings-form">
+      <div className="panel-title"><h2>腾讯云备份</h2></div>
+      <div className="settings-fields">
+        <p>用独立文件密码在本机加密当前项目。云端列表按时间和大小识别备份。</p>
+        <div className="settings-actions">
+          <Button onClick={upload} disabled={busy}>加密并上传当前项目</Button>
+          <Button onClick={() => load()} disabled={busy}>{busy ? "正在读取…" : "查看云端备份"}</Button>
+        </div>
+        {error && <p role="alert" className="inline-error">{error}</p>}
+        {rows?.length === 0 && <p>尚无云端备份。</p>}
+        {rows?.map((row) => (
+          <div className="settings-actions" key={row.id}>
+            <span>{new Date(row.createdAt).toLocaleString("zh-CN")} · {Math.ceil(row.size / 1024)} KB · {row.id.slice(0, 8)}</span>
+            <Button onClick={() => load(row.id)} disabled={busy}>解锁并导入</Button>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 function Prompts() {
@@ -980,6 +1081,8 @@ function Prompts() {
     workspace,
     current,
     updateWorkspace,
+    generate,
+    demo,
     copy,
     exportText,
     navigate,
@@ -991,6 +1094,7 @@ function Prompts() {
     [roleId, setRoleId] = useState(workspace.roles[0]?.id || ""),
     [instruction, setInstruction] = useState(""),
     [output, setOutput] = useState(workspace.history[0]?.text || ""),
+    [outputDemo, setOutputDemo] = useState(workspace.history[0]?.demo ?? true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [showHistory, setShowHistory] = useState(false);
@@ -1013,7 +1117,12 @@ function Prompts() {
     setBusy(true);
     setError("");
     try {
-      setOutput(demoPrompt(params));
+      const r = await generate(
+        { prompt: buildPrompt(params) },
+        demoPrompt(params),
+      );
+      setOutput(r.text);
+      setOutputDemo(demo);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1031,7 +1140,7 @@ function Prompts() {
           text: output,
           date: new Date().toLocaleString("zh-CN"),
           mode,
-          demo: true,
+          demo: outputDemo,
         },
         ...w.history,
       ].slice(0, 30),
@@ -1043,7 +1152,7 @@ function Prompts() {
       <PageHeading
         eyebrow="PROMPT WORKSHOP"
         title="让想法，变成画面。"
-        description="记录主体、镜头与动作，用本地模板编排画面提示词。"
+        description="说出你的想法，AI 帮你补齐主体、镜头与动作。"
       >
         <Button icon={Clock} onClick={() => setShowHistory(!showHistory)}>
           版本记录 <span className="count">{workspace.history.length}</span>
@@ -1054,7 +1163,7 @@ function Prompts() {
         {current.name}
         <CaretRight size={12} />
         <span>提示词工坊</span>
-        <Badge orange>本地模板</Badge>
+        <Badge orange>{demo ? "本地结构化演示" : "使用已连接模型"}</Badge>
       </div>
       {showHistory && (
         <div className="history-panel">
@@ -1073,6 +1182,7 @@ function Prompts() {
                 onClick={() => {
                   setOutput(h.text);
                   setMode(h.mode);
+                  setOutputDemo(h.demo);
                   setShowHistory(false);
                 }}
               >
@@ -1188,7 +1298,9 @@ function Prompts() {
             )}
             <div className="generate-row">
               <span>
-                使用本机模板编排当前故事和角色设定
+                {demo
+                  ? "演示模式不调用 API，也不产生费用"
+                  : "将以上文字和关联角色设定发送至模型"}
               </span>
               <Button
                 kind="primary"
@@ -1207,7 +1319,7 @@ function Prompts() {
           <div className="output-section">
             <div className="panel-title">
               <h3>
-                创作结果 {output && <Badge>可编辑</Badge>}
+                创作结果 {output && <Badge>{outputDemo ? "模板演示" : "AI 生成"}</Badge>}
               </h3>
               <div className="button-row">
                 <IconButton
@@ -1340,7 +1452,9 @@ function Characters() {
   const {
     workspace,
     updateWorkspace,
+    generate,
     setToast,
+    demo,
     copy,
     exportText,
     current,
@@ -1405,7 +1519,7 @@ function Characters() {
   async function enrich() {
     setBusy(true);
     setError("");
-    setDraft({
+    const fallback = JSON.stringify({
       ...draft,
       description:
         draft.description ||
@@ -1416,8 +1530,41 @@ function Characters() {
         draft.appearance ||
         "请补充五官、发型、服装和固定道具。",
     });
-    setToast("已补充本地模板，请检查后保存");
-    setBusy(false);
+    try {
+      const r = await generate(
+        {
+          json: true,
+          prompt: `根据以下角色设定补充人物卡，保持原有外貌与用户输入。仅输出 JSON，字段为 name,tag,age,personality,description,appearance,locked,negative，所有字段值为字符串。设定：${JSON.stringify(Object.fromEntries(["name", "tag", "age", "personality", "description", "appearance", "locked", "negative"].map((key) => [key, draft[key]])))}`,
+        },
+        fallback,
+      );
+      const match = r.text.match(/\{[\s\S]*\}/);
+      const data = JSON.parse(match?.[0] || r.text);
+      setDraft((d) => ({
+        ...d,
+        ...Object.fromEntries(
+          [
+            "name",
+            "tag",
+            "age",
+            "personality",
+            "description",
+            "appearance",
+            "locked",
+            "negative",
+          ]
+            .filter((k) => typeof data[k] === "string")
+            .map((k) => [k, data[k]]),
+        ),
+      }));
+      setToast(
+        demo ? "已补充演示设定，请检查后保存" : "AI 已补充设定，请检查后保存",
+      );
+    } catch (e) {
+      setError("角色设定未能生成：" + e.message);
+    } finally {
+      setBusy(false);
+    }
   }
   const cardPrompt = draft
     ? `${draft.name}，${draft.age}岁。${draft.appearance}\n性格：${draft.personality}\n固定特征：${draft.locked}\n负向约束：${draft.negative}`
@@ -1659,9 +1806,13 @@ function Characters() {
                     icon={MagicWand}
                     disabled={busy}
                     onClick={enrich}
-                    title="使用本地模板补充"
+                    title={
+                      demo
+                        ? "使用本地模板补充"
+                        : "仅发送角色设定文字，不发送参考图"
+                    }
                   >
-                    {busy ? "正在补充…" : "模板补充设定"}
+                    {busy ? "正在补充…" : "AI 完善设定"}
                   </Button>
                   <Button kind="primary" icon={FloppyDisk} onClick={save}>
                     保存角色卡
@@ -1972,15 +2123,31 @@ function Storyboard() {
   );
 }
 function Analysis() {
-  const { setToast, exportText, copy } = useStudio();
+  const {
+    generate, demo, setToast, exportText, copy, workspace,
+    updateWorkspace, setState, navigate,
+  } = useStudio();
   const [frames, setFrames] = useState([]),
     [mediaName, setMediaName] = useState(""),
     [duration, setDuration] = useState(0),
+    [focus, setFocus] = useState("镜头语言与制作流程"),
+    [question, setQuestion] = useState(""),
     [progress, setProgress] = useState(0),
     [reading, setReading] = useState(false),
+    [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [result, setResult] = useState("");
+    [result, setResult] = useState(workspace.referenceReport || ""),
+    [isExample, setIsExample] = useState(false),
+    [creating, setCreating] = useState(false),
+    [creationError, setCreationError] = useState("");
   const input = useRef();
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [videoUrl, setVideoUrl] = useState("");
   useEffect(
     () => () => {
@@ -1990,12 +2157,14 @@ function Analysis() {
   );
   async function importMedia(files) {
     const f = files?.[0];
-    if (!f || reading) return;
+    if (!f || reading || busy || creating) return;
     setError("");
     setResult("");
+    setIsExample(false);
+    setCreationError("");
     setFrames([]);
-    setDuration(0);
     setVideoUrl("");
+    setDuration(0);
     setReading(true);
     setProgress(0);
     setMediaName(f.name);
@@ -2006,12 +2175,12 @@ function Analysis() {
         const r = await extractFrames(f, setProgress);
         setFrames(r.frames);
         setDuration(r.duration);
-      } else if (["image/png","image/jpeg","image/webp"].includes(f.type)) {
+      } else if (["image/png", "image/jpeg", "image/webp"].includes(f.type)) {
         if (f.size > 4e6) throw new Error("图片请控制在 4 MB 以内。");
-        const url = await new Promise((resolve,reject) => {
+        const url = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result);
-          reader.onerror = () => reject(new Error("无法读取图片，请重新选择。"));
+          reader.onerror = () => reject(new Error("无法读取这张图片，请重新选择。"));
           reader.readAsDataURL(f);
         });
         setFrames([{ url, time: "静帧" }]);
@@ -2026,6 +2195,69 @@ function Analysis() {
       setReading(false);
     }
   }
+  async function analyze() {
+    if (!frames.length) {
+      setError("先导入一段视频或一张画面参考。");
+      return;
+    }
+    if (demo) {
+      setError(
+        "自定义素材分析需要连接支持图片输入的模型，并切换 API 模式。也可以查看下方的示例拆解。",
+      );
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setCreationError("");
+    try {
+      const r = await generate(
+        {
+          prompt: `分析以下用户提供的漫剧采样帧。时长${duration.toFixed(2)}秒，采样时间：${frames.map((f) => f.time).join(",")}。重点：${focus}。用户问题：${question || "如何学习其制作方法？"}。请按“可见事实 / 可能的制作步骤（推测） / 可复用的提示词结构 / 一致性检查 / 不确定性与下一步”输出。注意：这些是稀疏采样，不包含音频，不能断言完整情节、精确切点、对白、具体模型、原始提示词或成本。`,
+          images: frames.map((f) => f.url),
+        },
+        "",
+      );
+      setResult(r.text);
+      setIsExample(false);
+      updateWorkspace({ referenceReport: r.text });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function showExample() {
+    setResult(demoAnalysis);
+    setIsExample(true);
+    setCreationError("");
+  }
+  async function createExercise() {
+    if (creating || isExample || !result || demo) return;
+    setCreating(true);
+    setCreationError("");
+    try {
+      const response = await generate(
+        { prompt: buildExercisePrompt(result), json: true },
+        "",
+      );
+      const exercise = parseExercise(response.text, result);
+      const openProject = mounted.current;
+      const id = exercise.project.id;
+      setState((s) => ({
+        ...s,
+        activeId: openProject ? id : s.activeId,
+        projects: [...s.projects, exercise.project],
+        workspaces: { ...s.workspaces, [id]: exercise.workspace },
+      }));
+      if (openProject) navigate("characters");
+      setToast("练习项目已创建，包含角色卡、分镜和首版提示词");
+    } catch (err) {
+      if (mounted.current) setCreationError(err.message);
+      else setToast(err.message);
+    } finally {
+      setCreating(false);
+    }
+  }
   return (
     <>
       <PageHeading
@@ -2035,8 +2267,9 @@ function Analysis() {
       >
         <Button
           icon={FileText}
+          disabled={reading || busy || creating}
           onClick={() => {
-            setResult(demoAnalysis);
+            showExample();
             setToast("已载入本地示例复盘");
           }}
         >
@@ -2055,8 +2288,9 @@ function Analysis() {
             className={`upload-zone ${reading ? "is-reading" : ""}`}
             role="button"
             tabIndex={0}
-            onClick={() => !reading && input.current.click()}
-            onKeyDown={(e) => e.key === "Enter" && input.current.click()}
+            aria-disabled={reading || busy || creating}
+            onClick={() => !reading && !busy && !creating && input.current.click()}
+            onKeyDown={(e) => e.key === "Enter" && !reading && !busy && !creating && input.current.click()}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();
@@ -2097,7 +2331,7 @@ function Analysis() {
           {frames.length > 0 && (
             <>
               <div className="sample-heading">
-                <h3>本地采样帧</h3>
+                <h3>将发送的采样帧</h3>
                 <span>
                   {frames.length} 张{" "}
                   {duration > 0 ? `/ ${duration.toFixed(1)}s` : ""}
@@ -2122,11 +2356,48 @@ function Analysis() {
               )}
             </>
           )}
-          {error && (
-            <div className="inline-error" role="alert">
-              {error}
+          <div className="analysis-options">
+            <Field label="这次重点看什么？">
+              <select value={focus} onChange={(e) => setFocus(e.target.value)}>
+                {[
+                  "镜头语言与制作流程",
+                  "角色一致性与参考图",
+                  "叙事节奏与悬念设计",
+                  "画面风格与提示词结构",
+                ].map((v) => (
+                  <option key={v}>{v}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="你想弄明白的问题（可选）">
+              <textarea
+                rows={3}
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                placeholder="例如：为什么信封的特写能推动叙事？"
+              />
+            </Field>
+            <div className="info-banner">
+              <ImageSquare size={19} />
+              <p>
+                点击分析后，仅将上方采样帧和文字发送至已连接的模型。视觉分析不包含音轨，无法确认原作者使用的模型与提示词。
+              </p>
             </div>
-          )}
+            {error && (
+              <div className="inline-error" role="alert">
+                {error}
+              </div>
+            )}
+            <Button
+              kind="primary"
+              className="full-width"
+              icon={MagicWand}
+              disabled={busy || creating || reading || !frames.length}
+              onClick={analyze}
+            >
+              {busy ? "正在拆解参考片…" : "开始 AI 拆解"}
+            </Button>
+          </div>
         </section>
         <section className="analysis-output">
           <div className="panel-title">
@@ -2146,12 +2417,40 @@ function Analysis() {
               />
             </div>
           </div>
-          {result ? (
-            <div className="analysis-result">
-              {result.split("\n\n").map((p, i) => (
-                <p key={i}>{p}</p>
-              ))}
+          {busy ? (
+            <div className="skeleton-output">
+              <i />
+              <i />
+              <i />
+              <i />
             </div>
+          ) : result ? (
+            <>
+              <div className="analysis-result">
+                {result.split("\n\n").map((p, i) => (
+                  <p key={i}>{p}</p>
+                ))}
+              </div>
+              {!isExample && (
+                <div className="exercise-actions">
+                  <p>{demo
+                    ? "切换至 API 模式可根据这份拆解创建项目。"
+                    : "将这份文字拆解发送给模型，生成一个含角色卡、分镜和提示词的独立项目。"}
+                  </p>
+                  <Button
+                    kind="primary"
+                    icon={Plus}
+                    disabled={demo || creating || reading}
+                    onClick={createExercise}
+                  >
+                    {creating ? "正在设计练习项目…" : "生成原创练习项目"}
+                  </Button>
+                  {creationError && (
+                    <div role="alert" className="inline-error">{creationError}</div>
+                  )}
+                </div>
+              )}
+            </>
           ) : (
             <div className="analysis-empty">
               <div className="breakdown-illustration">
@@ -2184,9 +2483,9 @@ function Analysis() {
               ))}
               <button
                 className="text-link"
-                onClick={() => setResult(demoAnalysis)}
+                onClick={showExample}
               >
-                先看《灯塔来信》的示例复盘 <ArrowUpRight size={15} />
+                先看示例复盘 <ArrowUpRight size={15} />
               </button>
             </div>
           )}
@@ -2312,11 +2611,329 @@ function Learn() {
     </>
   );
 }
+function Settings({ authenticated = false }) {
+  const { settings, setSettings, setDemo, setToast } = useStudio();
+  const official = settings.openAIPreset;
+  const defaultOpenAI = settings.provider === "openai" && official;
+  const [form, setForm] = useState({
+      provider: settings.provider || "custom",
+      baseURL: settings.baseURL || (defaultOpenAI ? official.baseURL : ""),
+      model: settings.model || (defaultOpenAI ? official.model : ""),
+      apiKey: "",
+    }),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [success, setSuccess] = useState(""),
+    [visible, setVisible] = useState(false);
+  const native = !!window.studio;
+  const isCloud = form.provider === "tencent";
+  const hasChanges = form.apiKey !== "" || form.baseURL !== settings.baseURL ||
+    form.model !== settings.model || form.provider !== settings.provider;
+  function change(key, value) {
+    setForm((f) => ({ ...f, [key]: value }));
+    setError("");
+    setSuccess("");
+  }
+  async function save(e) {
+    e.preventDefault();
+    if (!native) {
+      setError(
+        "浏览器为界面预览。请打开本地 Mac App 连接模型，密钥不会保存在浏览器里。",
+      );
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      const s = await nativeCall("saveSettings", form);
+      setSettings(s);
+      setForm({ provider: s.provider, baseURL: s.baseURL, model: s.model, apiKey: "" });
+      setVisible(false);
+      setSuccess("连接配置已加密保存。点击「测试连接」可验证并启用 API 模式。");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function test() {
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      const r = await nativeCall("testConnection");
+      setSuccess("模型连接成功：" + r.message);
+      setDemo(false);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function disconnect() {
+    try {
+      setSettings(await nativeCall("disconnect"));
+      setDemo(true);
+      setSuccess("已移除本地连接和已保存的密钥。");
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  return (
+    <>
+      <PageHeading
+        eyebrow="MODEL CONNECTIONS"
+        title="你的模型，你的创作方式。"
+        description="连接 OpenAI 或自定义兼容服务，在提示词、角色卡和参考片拆解中使用同一个模型。"
+      />
+      <div className="settings-layout">
+        <form className="settings-form" onSubmit={save}>
+          <div className="panel-title">
+            <h2>
+              <Plugs size={21} /> AI 模型连接
+            </h2>
+            <Badge orange>{settings.hasKey ? "已保存配置" : "尚未连接"}</Badge>
+          </div>
+          <div className="settings-fields">
+            <div className={`provider-options ${official ? "with-openai" : ""}`}>
+              {[
+                ...(official ? [["openai", "OpenAI GPT", "文字与参考帧分析"]] : []),
+                ...(settings.cloudModel ? [["tencent", "云端模型转发", "需服务器启用模型"]] : []),
+                ["custom", "自定义服务", "OpenAI 兼容接口"],
+                ["deepseek", "DeepSeek", "文本创作与改写"],
+                ["siliconflow", "硅基流动", "按模型选择能力"],
+              ].map(([id, t, d]) => (
+                <button
+                  type="button"
+                  key={id}
+                  className={form.provider === id ? "active" : ""}
+                  onClick={() => {
+                    setForm((f) => ({
+                      ...f,
+                      provider: id,
+                      baseURL:
+                        id === "openai" ? official.baseURL : id === "deepseek"
+                          ? "https://api.deepseek.com"
+                          : id === "siliconflow"
+                            ? "https://api.siliconflow.cn/v1"
+                            : "",
+                      model: id === "tencent" ? settings.cloudModel : id === "openai" ? official.model : "",
+                      apiKey: "",
+                    }));
+                    setSuccess("");
+                    setError("");
+                  }}
+                >
+                  <span className="provider-letter">{t.slice(0, 1)}</span>
+                  <strong>{t}</strong>
+                  <small>{d}</small>
+                  {form.provider === id && <CheckCircle size={16} />}
+                </button>
+              ))}
+            </div>
+            <Field
+              label={isCloud ? "腾讯云服务根地址" : "API 地址（Base URL）"}
+              helper={isCloud ? "填写你部署的漫序后台 HTTPS 地址，可包含路径前缀。" : "填写服务商提供的 HTTPS 地址，可包含 /v1；本地服务可使用 http://localhost。"}
+            >
+              <input
+                type="url"
+                required
+                readOnly={form.provider === "openai"}
+                value={form.baseURL}
+                onChange={(e) => change("baseURL", e.target.value)}
+                placeholder="https://your-provider.example/v1"
+                autoComplete="off"
+              />
+            </Field>
+            <Field
+              label="模型 ID"
+              helper="精确填写服务商的模型 ID。参考片分析需要模型支持图片输入。"
+            >
+              <input
+                required
+                value={form.model}
+                readOnly={isCloud}
+                onChange={(e) => change("model", e.target.value)}
+                placeholder="填写服务商控制台中的模型 ID"
+                autoComplete="off"
+              />
+            </Field>
+            <Field
+              label={isCloud ? "云服务访问令牌" : "API Key"}
+              helper={
+                isCloud ? "填写服务器配置的漫序应用令牌。OpenAI 密钥由服务器保存。" : settings.hasKey
+                  ? "已保存密钥。留空会保留当前密钥；更换服务商时请填写新密钥。"
+                  : "模型地址、模型 ID 和密钥在本机一并加密，由 macOS 钥匙串保护。"
+              }
+            >
+              <div className="key-input">
+                <input
+                  type={visible ? "text" : "password"}
+                  required={!settings.hasKey}
+                  value={form.apiKey}
+                  onChange={(e) => change("apiKey", e.target.value)}
+                  placeholder={
+                    settings.hasKey && form.provider === settings.provider ? "已保存 · 输入可替换" : isCloud ? "输入云服务访问令牌" : "输入 API Key"
+                  }
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button type="button" onClick={() => setVisible(!visible)}>
+                  {visible ? "隐藏" : "显示"}
+                </button>
+              </div>
+            </Field>
+            {!native && (
+              <div className="info-banner">
+                <MonitorPlay size={19} />
+                <p>你正在查看浏览器原型。真实 API 连接请在 Mac App 中配置。</p>
+              </div>
+            )}
+            {error && (
+              <div className="inline-error" role="alert">
+                <WarningCircle size={16} />
+                {error}
+              </div>
+            )}
+            {success && (
+              <div className="inline-success" role="status">
+                <CheckCircle size={17} />
+                {success}
+              </div>
+            )}
+            <div className="settings-actions">
+              <Button
+                kind="primary"
+                icon={FloppyDisk}
+                type="submit"
+                disabled={busy}
+              >
+                {busy ? "正在处理…" : "保存连接配置"}
+              </Button>
+              <Button
+                icon={Plugs}
+                type="button"
+                disabled={busy || !settings.hasKey || !native || hasChanges}
+                onClick={test}
+              >
+                测试连接
+              </Button>
+              {settings.hasKey && (
+                <button
+                  type="button"
+                  className="text-link danger"
+                  onClick={disconnect}
+                >
+                  移除连接
+                </button>
+              )}
+            </div>
+            <p className="settings-footnote">
+              测试连接会发起一次模型请求，按服务商标准计费。OpenAI 测试使用应用自带的色块图验证读图能力。
+            </p>
+          </div>
+        </form>
+        <aside className="settings-aside">
+          <div className="privacy-mark">
+            <LockKey size={32} weight="thin" />
+          </div>
+          <h2>
+            创作在本地，
+            <br />
+            连接由你决定。
+          </h2>
+          <div>
+            <CheckCircle size={17} />
+            <p>
+              <strong>密钥加密保存</strong>
+              <span>不写入项目备份，也不上传 GitHub。</span>
+            </p>
+          </div>
+          <div>
+            <CheckCircle size={17} />
+            <p>
+              <strong>按操作发送内容</strong>
+              <span>点击生成才发送当前提示词；分析前先检查采样帧。</span>
+            </p>
+          </div>
+          <div>
+            <CheckCircle size={17} />
+            <p>
+              <strong>离线也能整理创作</strong>
+              <span>角色卡、分镜、教程和项目备份都可以在本地使用。</span>
+            </p>
+          </div>
+          <div className="compatibility-note">
+            <strong>第一版支持范围</strong>
+            <p>
+              文本模型用于提示词与角色设定；图片输入模型用于参考帧分析。图片和视频生成、语音识别可在后续版本扩展。
+            </p>
+          </div>
+        </aside>
+      </div>
+      {settings.cloudModel && <BackupSettings />}
+    </>
+  );
+}
+function BackupSettings() {
+  const { settings, setSettings } = useStudio();
+  const [baseURL, setURL] = useState(settings.backupURL || "");
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
+  const dirty = token !== "" || baseURL !== (settings.backupURL || "");
+  async function apply(action) {
+    setBusy(true);
+    setStatus("");
+    setError("");
+    try {
+      if (action === "test") {
+        const r = await nativeCall("testBackupSettings");
+        setStatus(r.message);
+      } else {
+        const next = action === "save"
+          ? await nativeCall("saveBackupSettings", {baseURL, token})
+          : await nativeCall("removeBackupSettings");
+        setSettings(next);
+        setURL(next.backupURL || "");
+        setToken("");
+        setStatus(action === "save" ? "备份连接已加密保存" : "已移除本机备份连接");
+      }
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+  return (
+    <form className="settings-form" onSubmit={(e) => {e.preventDefault(); apply("save");}}>
+      <div className="panel-title"><h2>独立腾讯云备份</h2><Badge>{settings.cloudBackups ? "已绑定" : "未绑定"}</Badge></div>
+      <div className="settings-fields">
+        <p>备份连接与上方模型连接分别保存。检测备份只读取云端备份列表。</p>
+        <Field label="备份服务根地址">
+          <input type="url" required autoComplete="off" value={baseURL} onChange={(e)=>setURL(e.target.value)} />
+        </Field>
+        <Field label="备份服务令牌">
+          <input type="password" required={!settings.cloudBackups} autoComplete="off" value={token}
+            placeholder={settings.cloudBackups ? "已保存 · 输入可替换" : "输入云服务访问令牌"}
+            onChange={(e)=>setToken(e.target.value)} />
+        </Field>
+        {error && <p role="alert" className="inline-error">{error}</p>}
+        {status && <p role="status" className="inline-success">{status}</p>}
+        <div className="settings-actions">
+          <Button type="submit" disabled={busy}>保存备份配置</Button>
+          <Button type="button" disabled={busy || !settings.cloudBackups || dirty} onClick={()=>apply("test")}>检测备份连接</Button>
+          {settings.cloudBackups && <Button type="button" disabled={busy} onClick={()=>apply("remove")}>移除备份连接</Button>}
+        </div>
+      </div>
+    </form>
+  );
+}
 function CommandPalette({ close }) {
   const { navigate } = useStudio();
   const [query, setQuery] = useState("");
   const items = [
     ...nav.map(([id, label, Icon]) => ({ id, label, Icon })),
+    { id: "settings", label: "连接 AI 模型", Icon: Plugs },
   ].filter((v) => v.label.includes(query));
   return (
     <div className="modal-overlay command-overlay" onClick={close}>

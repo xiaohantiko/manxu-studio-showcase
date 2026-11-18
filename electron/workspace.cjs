@@ -2,6 +2,15 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
+async function optionalJson(file) {
+  try {
+    return JSON.parse(await fs.readFile(file, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw new Error("旧版配置无法读取；为避免数据丢失，未改动原文件。");
+  }
+}
+
 function assertWorkspace(data) {
   if (
     !data ||
@@ -27,7 +36,42 @@ function assertWorkspace(data) {
   return data;
 }
 
-function createWorkspaceStore(vault) {
+async function migrateBundledImages(data, legacyAssets) {
+  if (!legacyAssets) return data;
+  const images = new Map();
+  for (const w of Object.values(data.workspaces)) {
+    for (const entry of [...w.roles, ...w.shots]) {
+      const name = entry?.image;
+      if (
+        typeof name !== "string" ||
+        !/^(portrait|costume|expression|hallway|shot-[1-4])\.png$/.test(name)
+      )
+        continue;
+      if (!images.has(name)) {
+        const file = path.join(legacyAssets, name);
+        let size;
+        try {
+          size = (await fs.stat(file)).size;
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+        if (!size || size > 4 * 1024 * 1024) continue;
+        const content = await fs.readFile(file);
+        if (
+          !content
+            .subarray(0, 8)
+            .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+        )
+          continue;
+        images.set(name, "data:image/png;base64," + content.toString("base64"));
+      }
+      if (images.has(name)) entry.image = images.get(name);
+    }
+  }
+  return data;
+}
+
+function createWorkspaceStore(vault, { legacyAssets } = {}) {
   return {
     async load(legacy) {
       const record = await vault.readOrMigrate("workspace", async () => {
@@ -43,7 +87,7 @@ function createWorkspaceStore(vault) {
         } catch {
           throw new Error("旧版工作区无法读取，原始数据已保留。");
         }
-        return assertWorkspace(data);
+        return migrateBundledImages(assertWorkspace(data), legacyAssets);
       });
       return record === null ? null : assertWorkspace(record);
     },
@@ -53,9 +97,9 @@ function createWorkspaceStore(vault) {
 
 function registerWorkspaceIpc(
   handle,
-  { vault, dialog, getWindow },
+  { vault, dialog, getWindow, legacyAssets },
 ) {
-  const workspace = createWorkspaceStore(vault);
+  const workspace = createWorkspaceStore(vault, { legacyAssets });
   handle("workspace:load", (legacy) => workspace.load(legacy));
   handle("workspace:save", (data) => workspace.save(data));
   handle("file:export", async (encrypted) => {
@@ -95,4 +139,4 @@ function registerWorkspaceIpc(
   });
 }
 
-module.exports = { createWorkspaceStore, registerWorkspaceIpc };
+module.exports = { optionalJson, createWorkspaceStore, registerWorkspaceIpc };

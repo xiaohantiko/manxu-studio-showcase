@@ -7,7 +7,9 @@ const appRoot = normalizePath(fileURLToPath(new URL(".", import.meta.url)));
 const privateFolders = [
   ".git",
   "public",
+  "services",
   "private",
+  "cloud",
   "electron",
   "dist",
   "output",
@@ -34,7 +36,6 @@ export default defineConfig({
     },
   ],
   base: "./",
-  // `public/` may still hold original local material from older versions.
   publicDir: "demo-public",
   server: {
     host: "127.0.0.1",

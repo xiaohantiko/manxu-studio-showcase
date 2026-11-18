@@ -63,23 +63,23 @@ async function setup(testContext, props = {}) {
   return { directory, safeStorage, options, vault: createVault(options) };
 }
 
-test("vault round trips workspace and notebook across restarts without plaintext", async (t) => {
+test("vault round trips private workspace and configuration across restarts without plaintext", async (t) => {
   const { directory, options, vault } = await setup(t);
   const workspace = {
     projects: [{ title: secret }],
     image: "data:image/png;base64,eW91ci1pbWFnZQ==",
   };
-  const notebook = {
-    title: "synthetic-story-title",
-    scene: "synthetic-scene-detail",
+  const config = {
+    apiKey: "fake-test-key-104209",
+    baseURL: "https://fictional.invalid",
   };
   assert.equal(await vault.read("workspace"), null);
   await vault.write("workspace", workspace);
-  await vault.write("notes", notebook);
+  await vault.write("connection", config);
   assert.deepEqual(await createVault(options).read("workspace"), workspace);
-  assert.deepEqual(await createVault(options).read("notes"), notebook);
+  assert.deepEqual(await createVault(options).read("connection"), config);
   const names = (await readdir(directory)).sort();
-  assert.deepEqual(names, ["key.wrap", "notes.enc", "workspace.enc"]);
+  assert.deepEqual(names, ["connection.enc", "key.wrap", "workspace.enc"]);
   for (const name of names) {
     const target = path.join(directory, name);
     const bytes = await readFile(target);
@@ -87,8 +87,8 @@ test("vault round trips workspace and notebook across restarts without plaintext
     for (const value of [
       secret,
       workspace.image,
-      notebook.title,
-      notebook.scene,
+      config.apiKey,
+      config.baseURL,
     ])
       assert.ok(!bytes.includes(value));
   }
@@ -101,8 +101,8 @@ test("vault round trips workspace and notebook across restarts without plaintext
     await readFile(path.join(directory, "workspace.enc")),
     currentCiphertext,
   );
-  await vault.remove("notes");
-  assert.equal(await vault.read("notes"), null);
+  await vault.remove("connection");
+  assert.equal(await vault.read("connection"), null);
   assert.deepEqual(await vault.read("workspace"), workspace);
 });
 
@@ -134,8 +134,8 @@ test("migration is once-only and refuses to overwrite tampered records", async (
 
 test("ciphertext from another record cannot be read under a different name", async (t) => {
   const { directory, vault } = await setup(t);
-  await vault.write("story", { user: secret });
-  const bytes = await readFile(path.join(directory, "story.enc"));
+  await vault.write("admin", { user: secret });
+  const bytes = await readFile(path.join(directory, "admin.enc"));
   await writeFile(path.join(directory, "workspace.enc"), bytes, {
     mode: 0o600,
   });

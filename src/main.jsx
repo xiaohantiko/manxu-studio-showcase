@@ -1,8 +1,16 @@
+import ExportDialog from "./ExportDialog";
+import {
+  decryptPortable,
+  encryptPortable,
+  MAX_PORTABLE_BYTES,
+  PORTABLE_EXTENSION,
+} from "./portable";
 import React, {
   createContext,
   useContext,
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
 } from "react";
 import { createRoot } from "react-dom/client";
@@ -92,14 +100,7 @@ const nav = [
   ["analysis", "参考片拆解", MonitorPlay],
   ["learn", "新手学院", BookOpen],
 ];
-function readState() {
-  try {
-    const data = JSON.parse(localStorage.getItem("manxu.public.workspace.v1"));
-    return data?.workspaces && data?.projects?.length ? data : initial;
-  } catch {
-    return initial;
-  }
-}
+const LEGACY_STORAGE_KEY = "manxu.public.workspace.v1";
 async function nativeCall(method, data) {
   const result = await window.studio[method](data);
   if (!result.ok) throw new Error(result.error);
@@ -152,23 +153,72 @@ function PageHeading({ eyebrow, title, description, children }) {
   );
 }
 function App() {
-  const [state, setState] = useState(readState),
+  const [startingState, setStartingState] = useState(
+    window.studio ? null : initial,
+  );
+  const [error, setError] = useState("");
+  async function load() {
+    setError("");
+    try {
+      const previous = localStorage.getItem(LEGACY_STORAGE_KEY);
+      const saved = await nativeCall("loadWorkspace", previous);
+      // The main process only returns after the encrypted migration is durable.
+      if (previous !== null) localStorage.removeItem(LEGACY_STORAGE_KEY);
+      setStartingState(saved ?? initial);
+    } catch (err) {
+      setError(err.message || "无法读取本机加密仓库。");
+    }
+  }
+  useEffect(() => {
+    if (window.studio) load();
+  }, []);
+  if (startingState) return <StudioApp startingState={startingState} />;
+  return (
+    <main className="privacy-gate">
+      <section aria-live="polite">
+        <span className="tool-icon">
+          <LockKey size={25} />
+        </span>
+        <h1>{error ? "无法打开加密工作区" : "正在打开加密工作区"}</h1>
+        <p>{error || "如 macOS 请求钥匙串权限，请在系统弹窗中允许访问。"}</p>
+        {error && (
+          <Button kind="primary" icon={ArrowClockwise} onClick={load}>
+            重试
+          </Button>
+        )}
+      </section>
+    </main>
+  );
+}
+function StudioApp({ startingState }) {
+  const [state, setState] = useState(startingState),
     [route, setRoute] = useState("home"),
     [toast, setToast] = useState(""),
     [modal, setModal] = useState(null),
+    [passwordTask, setPasswordTask] = useState(null),
+    [openedText, setOpenedText] = useState(null),
     [command, setCommand] = useState(false),
-    [storageError, setStorageError] = useState(false);
+    [storageStatus, setStorageStatus] = useState("saved"),
+    [retryStorage, setRetryStorage] = useState(0);
   const current =
     state.projects.find((p) => p.id === state.activeId) || state.projects[0];
   const workspace = state.workspaces[current.id] || blankWorkspace();
-  useEffect(() => {
-    try {
-      localStorage.setItem("manxu.public.workspace.v1", JSON.stringify(state));
-      setStorageError(false);
-    } catch {
-      setStorageError(true);
-    }
-  }, [state]);
+  useLayoutEffect(() => {
+    if (!window.studio) return;
+    let currentSave = true;
+    setStorageStatus("saving");
+    nativeCall("saveWorkspace", state).then(
+      () => {
+        if (currentSave) setStorageStatus("saved");
+      },
+      () => {
+        if (currentSave) setStorageStatus("error");
+      },
+    );
+    return () => {
+      currentSave = false;
+    };
+  }, [state, retryStorage]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(""), 3800);
@@ -181,6 +231,7 @@ function App() {
         setCommand((v) => !v);
       }
       if (e.key === "Escape") {
+        setOpenedText(null);
         setModal(null);
         setCommand(false);
       }
@@ -210,25 +261,50 @@ function App() {
     setRoute(r);
     setCommand(false);
   };
-  const exportText = async (name, text) => {
-    try {
-      if (window.studio) {
-        const result = await nativeCall("exportFile", { name, text });
-        if (!result.canceled) setToast("已导出到所选位置");
-      } else {
-        const url = URL.createObjectURL(
-          new Blob([text], { type: "text/plain;charset=utf-8" }),
+  const exportText = (name, text, kind = "text") => {
+    setPasswordTask({
+      mode: "encrypt",
+      submit: async (password) => {
+        const encrypted = await encryptPortable(
+          JSON.stringify({ kind, name, text }),
+          password,
         );
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = name;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        setToast("文件已导出");
-      }
-    } catch (e) {
-      setToast(e.message);
-    }
+        if (window.studio) {
+          const result = await nativeCall("exportFile", encrypted);
+          if (!result.canceled) setToast("加密文件已保存");
+        } else {
+          const url = URL.createObjectURL(
+            new Blob([encrypted], { type: "application/json" }),
+          );
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `漫序-加密文件-${uid().slice(0, 8)}${PORTABLE_EXTENSION}`;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          setToast("加密文件已导出");
+        }
+      },
+    });
+  };
+  const openEncrypted = (envelope, onProject) => {
+    setPasswordTask({
+      mode: "decrypt",
+      submit: async (password) => {
+        let payload;
+        try {
+          payload = JSON.parse(await decryptPortable(envelope, password));
+        } catch (err) {
+          if (err instanceof SyntaxError)
+            throw new Error("该文件的内容格式无法识别。");
+          throw err;
+        }
+        if (typeof payload?.text !== "string")
+          throw new Error("加密文件缺少内容。");
+        if (payload.kind === "project") onProject(payload.text);
+        else if (payload.kind === "text") setOpenedText(payload);
+        else throw new Error("该文件的内容格式无法识别。");
+      },
+    });
   };
   const copy = async (text) => {
     try {
@@ -237,10 +313,6 @@ function App() {
     } catch {
       setToast("复制失败，请选中文本后按 ⌘C。");
     }
-  };
-  const generate = async (text) => {
-    await new Promise((resolve) => setTimeout(resolve, 650));
-    return { text };
   };
   const ctx = {
     state,
@@ -254,8 +326,8 @@ function App() {
     setToast,
     modal,
     setModal,
-    generate,
     exportText,
+    openEncrypted,
     copy,
   };
   return (
@@ -321,7 +393,7 @@ function App() {
               <div>
                 独立创作者<small>本地工作空间</small>
               </div>
-              <span className="version">v0.1</span>
+              <span className="version">v0.3</span>
             </div>
           </div>
         </aside>
@@ -372,10 +444,26 @@ function App() {
           </main>
           <footer className="app-footer">
             <span>
-              <span className={`tiny-dot ${storageError ? "warning" : ""}`} />
-              {storageError
-                ? "存储空间不足，请导出项目备份"
-                : "创作内容保存在这台 Mac 上"}
+              <span
+                className={`tiny-dot ${storageStatus === "error" ? "warning" : ""}`}
+              />
+              {!window.studio ? (
+                "浏览器预览 · 本次编辑不会自动保存"
+              ) : storageStatus === "error" ? (
+                <>
+                  加密保存失败，请先导出备份{" "}
+                  <button
+                    className="text-link"
+                    onClick={() => setRetryStorage((n) => n + 1)}
+                  >
+                    重试
+                  </button>
+                </>
+              ) : storageStatus === "saving" ? (
+                "正在加密保存…"
+              ) : (
+                "创作数据已加密保存在这台 Mac 上"
+              )}
             </span>
             <span>
               MANXU STUDIO <span className="footer-separator">/</span> MADE FOR
@@ -392,6 +480,42 @@ function App() {
       )}
       {modal === "project" && <ProjectModal />}
       {command && <CommandPalette close={() => setCommand(false)} />}
+      {passwordTask && (
+        <ExportDialog
+          key={passwordTask.mode}
+          mode={passwordTask.mode}
+          onSubmit={passwordTask.submit}
+          onClose={() => setPasswordTask(null)}
+        />
+      )}
+      {openedText && !passwordTask && (
+        <div className="modal-overlay">
+          <section
+            className="modal decrypted-text-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="decrypted-title"
+          >
+            <div className="modal-head">
+              <span className="tool-icon">
+                <LockKey size={22} />
+              </span>
+              <IconButton
+                icon={X}
+                label="关闭"
+                onClick={() => setOpenedText(null)}
+              />
+            </div>
+            <h2 id="decrypted-title">{openedText.name || "已解密的文档"}</h2>
+            <Field label="本次打开期间可见">
+              <textarea readOnly rows={12} value={openedText.text} />
+            </Field>
+            <Button icon={Copy} onClick={() => copy(openedText.text)}>
+              复制到系统剪贴板
+            </Button>
+          </section>
+        </div>
+      )}
     </Context.Provider>
   );
 }
@@ -403,7 +527,7 @@ function Home() {
       <PageHeading
         eyebrow="YOUR CREATIVE WORKSPACE"
         title="开始你的下一幕。"
-        description="从灵感到分镜，和 AI 一起把故事讲出来。"
+        description="从故事出发，用角色卡和分镜安排每一幕。"
       >
         <Button kind="primary" icon={Plus} onClick={() => setModal("project")}>
           新建漫剧项目
@@ -551,7 +675,11 @@ function Home() {
         </span>
         <div>
           <strong>灵感属于你，创作也属于你。</strong>
-          <span>项目保存在本机，可从项目空间导出备份。</span>
+          <span>
+            {window.studio
+              ? "项目加密保存在本机。可从项目空间导出备份。"
+              : "浏览器预览不自动保存，请使用加密导出保留你的创作。"}
+          </span>
         </div>
       </div>
     </>
@@ -674,41 +802,50 @@ function Projects() {
     navigate,
     setModal,
     exportText,
+    openEncrypted,
     setToast,
   } = useStudio();
   const file = useRef();
   const [query, setQuery] = useState("");
-  async function importProject(e) {
-    try {
-      const f = e.target.files[0];
-      if (!f) return;
-      if (f.size > 25e6) throw new Error("项目文件不能超过 25 MB。");
-      const d = validateProject(JSON.parse(await f.text()));
-      const source = d.projects[0];
-      if (!source) throw new Error("文件中没有项目。");
-      const id = uid();
-      setState((s) => ({
-        ...s,
-        activeId: id,
-        projects: [
-          ...s.projects,
-          { ...source, id, name: source.name + " · 导入" },
-        ],
-        workspaces: {
-          ...s.workspaces,
-          [id]: {
-            roles: d.roles,
-            shots: d.shots,
-            prompt: d.prompt,
-            history: [],
-          },
+  function addImportedProject(text) {
+    const d = validateProject(JSON.parse(text));
+    const source = d.projects[0];
+    if (!source) throw new Error("文件中没有项目。");
+    const id = uid();
+    setState((s) => ({
+      ...s,
+      activeId: id,
+      projects: [
+        ...s.projects,
+        { ...source, id, name: source.name + " · 导入" },
+      ],
+      workspaces: {
+        ...s.workspaces,
+        [id]: {
+          roles: d.roles,
+          shots: d.shots,
+          prompt: d.prompt,
+          history: d.history,
+          referenceReport: d.referenceReport,
         },
-      }));
-      setToast("项目已导入");
+      },
+    }));
+    setToast("项目已导入");
+  }
+  async function importProject(e) {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    try {
+      if (f.size > MAX_PORTABLE_BYTES)
+        throw new Error("文件超出导入大小上限。");
+      const text = await f.text();
+      if (f.name.toLowerCase().endsWith(PORTABLE_EXTENSION))
+        openEncrypted(text, addImportedProject);
+      else addImportedProject(text); // Former plaintext JSON backups remain readable.
     } catch (err) {
       setToast(err.message);
     }
-    e.target.value = "";
   }
   return (
     <>
@@ -718,7 +855,7 @@ function Projects() {
         description="每个故事都有自己的角色、提示词和分镜。"
       >
         <Button icon={UploadSimple} onClick={() => file.current.click()}>
-          导入项目
+          打开文件 / 导入项目
         </Button>
         <Button kind="primary" icon={Plus} onClick={() => setModal("project")}>
           新建项目
@@ -728,7 +865,7 @@ function Projects() {
         hidden
         ref={file}
         type="file"
-        accept=".json"
+        accept=".json,.manxu"
         onChange={importProject}
       />
       <div className="toolbar">
@@ -757,7 +894,7 @@ function Projects() {
             >
               <div className={`project-cover cover-${i % 3}`}>
                 {p.id === initialProject.id ? (
-                  <img src={asset("shot-1.svg")} alt="灯塔来信分镜" />
+                  <img src={asset("shot-1.png")} alt="示例分镜" />
                 ) : (
                   <>
                     <FilmStrip size={58} weight="thin" />
@@ -818,14 +955,17 @@ function Projects() {
                     roles: workspace.roles,
                     shots: workspace.shots,
                     prompt: workspace.prompt,
+                    history: workspace.history,
+                    referenceReport: workspace.referenceReport,
                   },
                   null,
                   2,
                 ),
+                "project",
               )
             }
           >
-            导出备份
+            加密导出备份
           </Button>
           <Button kind="dark" onClick={() => navigate("prompts")}>
             进入创作 <ArrowRight size={16} />
@@ -840,18 +980,17 @@ function Prompts() {
     workspace,
     current,
     updateWorkspace,
-    generate,
     copy,
     exportText,
     navigate,
     setToast,
   } = useStudio();
   const [idea, setIdea] = useState(workspace.prompt),
-    [mode, setMode] = useState("视频提示词"),
+    [mode, setMode] = useState(workspace.history[0]?.mode || "视频提示词"),
     [style, setStyle] = useState("写实电影感"),
     [roleId, setRoleId] = useState(workspace.roles[0]?.id || ""),
     [instruction, setInstruction] = useState(""),
-    [output, setOutput] = useState(""),
+    [output, setOutput] = useState(workspace.history[0]?.text || ""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [showHistory, setShowHistory] = useState(false);
@@ -864,6 +1003,7 @@ function Prompts() {
     duration: current.duration,
     mode,
     instruction,
+    previous: output,
   };
   async function run() {
     if (!idea.trim()) {
@@ -873,8 +1013,7 @@ function Prompts() {
     setBusy(true);
     setError("");
     try {
-      const r = await generate(demoPrompt(params));
-      setOutput(r.text);
+      setOutput(demoPrompt(params));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -904,7 +1043,7 @@ function Prompts() {
       <PageHeading
         eyebrow="PROMPT WORKSHOP"
         title="让想法，变成画面。"
-        description="说出你的想法，AI 帮你补齐主体、镜头与动作。"
+        description="记录主体、镜头与动作，用本地模板编排画面提示词。"
       >
         <Button icon={Clock} onClick={() => setShowHistory(!showHistory)}>
           版本记录 <span className="count">{workspace.history.length}</span>
@@ -915,7 +1054,7 @@ function Prompts() {
         {current.name}
         <CaretRight size={12} />
         <span>提示词工坊</span>
-        <Badge orange>本地结构化演示</Badge>
+        <Badge orange>本地模板</Badge>
       </div>
       {showHistory && (
         <div className="history-panel">
@@ -933,6 +1072,7 @@ function Prompts() {
                 key={h.id}
                 onClick={() => {
                   setOutput(h.text);
+                  setMode(h.mode);
                   setShowHistory(false);
                 }}
               >
@@ -981,7 +1121,7 @@ function Prompts() {
                   setIdea(e.target.value);
                   updateWorkspace({ prompt: e.target.value });
                 }}
-                placeholder="例如：邮差在海边收到了一封来自明天的信……"
+                placeholder="例如：邮差在海边收到一封来自明天的信……"
               />
             </Field>
             <div className="form-grid">
@@ -1047,7 +1187,9 @@ function Prompts() {
               </div>
             )}
             <div className="generate-row">
-              <span>在本机从故事和角色设定编排提示词</span>
+              <span>
+                使用本机模板编排当前故事和角色设定
+              </span>
               <Button
                 kind="primary"
                 icon={busy ? ArrowClockwise : MagicWand}
@@ -1065,7 +1207,7 @@ function Prompts() {
           <div className="output-section">
             <div className="panel-title">
               <h3>
-                创作结果 <Badge>本地模板</Badge>
+                创作结果 {output && <Badge>可编辑</Badge>}
               </h3>
               <div className="button-row">
                 <IconButton
@@ -1129,7 +1271,7 @@ function Prompts() {
                   src={
                     role.image?.startsWith("data:")
                       ? role.image
-                      : asset(role.image || "portrait.svg")
+                      : asset(role.image || "portrait.png")
                   }
                   alt={role.name}
                 />
@@ -1198,7 +1340,6 @@ function Characters() {
   const {
     workspace,
     updateWorkspace,
-    generate,
     setToast,
     copy,
     exportText,
@@ -1264,7 +1405,7 @@ function Characters() {
   async function enrich() {
     setBusy(true);
     setError("");
-    const fallback = JSON.stringify({
+    setDraft({
       ...draft,
       description:
         draft.description ||
@@ -1275,33 +1416,8 @@ function Characters() {
         draft.appearance ||
         "请补充五官、发型、服装和固定道具。",
     });
-    try {
-      const r = await generate(fallback);
-      const match = r.text.match(/\{[\s\S]*\}/);
-      const data = JSON.parse(match?.[0] || r.text);
-      setDraft((d) => ({
-        ...d,
-        ...Object.fromEntries(
-          [
-            "name",
-            "tag",
-            "age",
-            "personality",
-            "description",
-            "appearance",
-            "locked",
-            "negative",
-          ]
-            .filter((k) => typeof data[k] === "string")
-            .map((k) => [k, data[k]]),
-        ),
-      }));
-      setToast("已补充本地示例设定，请检查后保存");
-    } catch (e) {
-      setError("角色设定未能生成：" + e.message);
-    } finally {
-      setBusy(false);
-    }
+    setToast("已补充本地模板，请检查后保存");
+    setBusy(false);
   }
   const cardPrompt = draft
     ? `${draft.name}，${draft.age}岁。${draft.appearance}\n性格：${draft.personality}\n固定特征：${draft.locked}\n负向约束：${draft.negative}`
@@ -1539,8 +1655,13 @@ function Characters() {
                   </div>
                 )}
                 <div className="character-form-footer">
-                  <Button icon={MagicWand} disabled={busy} onClick={enrich}>
-                    {busy ? "正在补充…" : "AI 完善设定"}
+                  <Button
+                    icon={MagicWand}
+                    disabled={busy}
+                    onClick={enrich}
+                    title="使用本地模板补充"
+                  >
+                    {busy ? "正在补充…" : "模板补充设定"}
                   </Button>
                   <Button kind="primary" icon={FloppyDisk} onClick={save}>
                     保存角色卡
@@ -1689,7 +1810,12 @@ function Storyboard() {
               >
                 <div className="shot-frame">
                   {s.image ? (
-                    <img src={asset(s.image)} alt={s.title} />
+                    <img
+                      src={
+                        s.image.startsWith("data:") ? s.image : asset(s.image)
+                      }
+                      alt={s.title}
+                    />
                   ) : (
                     <FilmStrip size={40} weight="thin" />
                   )}
@@ -1710,7 +1836,14 @@ function Storyboard() {
             <div className="shot-detail">
               <div className="shot-preview">
                 {shot.image ? (
-                  <img src={asset(shot.image)} alt={shot.title} />
+                  <img
+                    src={
+                      shot.image.startsWith("data:")
+                        ? shot.image
+                        : asset(shot.image)
+                    }
+                    alt={shot.title}
+                  />
                 ) : (
                   <Empty
                     icon={FilmStrip}
@@ -1822,7 +1955,7 @@ function Storyboard() {
               计划分镜与生成结果可能有差异。对照检查动作衔接，记得亲自试听声音。
             </p>
             <Button icon={Play} onClick={() => setPlay(!play)}>
-              {play ? "收起成片" : "播放《灯塔来信》"}
+              {play ? "收起成片" : "播放示例成片"}
             </Button>
           </div>
           {play && <video controls autoPlay src={asset("sample.mp4")} />}
@@ -1857,10 +1990,12 @@ function Analysis() {
   );
   async function importMedia(files) {
     const f = files?.[0];
-    if (!f) return;
+    if (!f || reading) return;
     setError("");
     setResult("");
     setFrames([]);
+    setDuration(0);
+    setVideoUrl("");
     setReading(true);
     setProgress(0);
     setMediaName(f.name);
@@ -1871,11 +2006,12 @@ function Analysis() {
         const r = await extractFrames(f, setProgress);
         setFrames(r.frames);
         setDuration(r.duration);
-      } else if (f.type.startsWith("image/")) {
+      } else if (["image/png","image/jpeg","image/webp"].includes(f.type)) {
         if (f.size > 4e6) throw new Error("图片请控制在 4 MB 以内。");
-        const url = await new Promise((resolve) => {
+        const url = await new Promise((resolve,reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error("无法读取图片，请重新选择。"));
           reader.readAsDataURL(f);
         });
         setFrames([{ url, time: "静帧" }]);

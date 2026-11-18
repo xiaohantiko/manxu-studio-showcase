@@ -1,6 +1,22 @@
-import { defineConfig } from "vite";
+import { defineConfig, normalizePath } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { fileURLToPath } from "node:url";
+
+const appRoot = normalizePath(fileURLToPath(new URL(".", import.meta.url)));
+const privateFolders = [
+  ".git",
+  "public",
+  "private",
+  "electron",
+  "dist",
+  "output",
+  "release",
+  ".cache",
+  ".playwright-cli",
+  "scripts",
+  "tests",
+];
 export default defineConfig({
   plugins: [
     react(),
@@ -18,5 +34,19 @@ export default defineConfig({
     },
   ],
   base: "./",
-  server: { host: "127.0.0.1" },
+  // `public/` may still hold original local material from older versions.
+  publicDir: "demo-public",
+  server: {
+    host: "127.0.0.1",
+    fs: {
+      strict: true,
+      allow: [appRoot],
+      deny: [
+        ".env",
+        ".env.*",
+        "*.{crt,pem,key}",
+        ...privateFolders.map((folder) => `${appRoot}${folder}/**`),
+      ],
+    },
+  },
 });

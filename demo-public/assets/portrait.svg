@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280" role="img" aria-label="插画：邮差许知遥">
+  <defs><linearGradient id="sky" x2="1" y2="1"><stop stop-color="#d5dbbe"/><stop offset="1" stop-color="#a0b6a5"/></linearGradient></defs>
+  <path fill="url(#sky)" d="M0 0h720v1280H0z"/><circle cx="539" cy="317" r="121" fill="#eee7c6"/>
+  <path d="M0 821q170-63 357 3t363-42v498H0" fill="#8da397"/><path d="M0 933q170-63 357 3t363-42v386H0" fill="#688778"/>
+  <circle cx="367" cy="675" r="224" fill="#dfe1c5" opacity=".38"/>
+  <path d="M258 648c-5-106 38-163 120-163 87 0 123 67 115 169-5 68 8 127 30 178H227c25-60 36-115 31-184Z" fill="#3c3f35"/>
+  <path d="M178 1036c17-116 86-192 163-235h70c130 56 167 150 176 235l24 244H128Z" fill="#bba886"/>
+  <path d="m337 753-13 65 53 60 48-60-15-68Z" fill="#d4a986"/>
+  <path d="M287 627c6-55 38-101 93-95 64 6 100 47 94 103-8 79-55 144-97 143-44-1-91-68-90-151Z" fill="#e0b395"/>
+  <path d="M277 654c5-146 74-174 143-151 40 14 60 65 59 130-51-8-97-45-119-69-19 29-50 46-83 54Z" fill="#3c3f35"/>
+  <path d="M316 669q12-8 25 0m66 0q12-8 26 0" stroke="#4d483b" fill="none" stroke-linecap="round" stroke-width="4"/>
+  <path d="M365 723q14 6 27-2" fill="none" stroke="#9d6f59" stroke-width="4" stroke-linecap="round"/>
+  <path d="m324 814 54 63-53 51-42-77Zm101 1-47 62 54 51 45-70Z" fill="#e3d3b0"/>
+  <path d="m505 868 41 29-180 383H277Z" fill="#4f6b58"/>
+  <rect x="428" y="1037" width="124" height="84" rx="9" fill="#e9e2c7" transform="rotate(-13 490 1080)"/><path d="m435 1050 54 27 55-47" stroke="#9f9174" stroke-width="3" fill="none"/>
+</svg>

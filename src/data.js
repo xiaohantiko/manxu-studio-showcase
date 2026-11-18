@@ -1,5 +1,19 @@
 export const hasSampleVideo = false;
-export const asset = (name) => `${import.meta.env.BASE_URL}assets/${name}`;
+const illustrations = new Set([
+  "portrait",
+  "costume",
+  "expression",
+  "hallway",
+  "shot-1",
+  "shot-2",
+  "shot-3",
+  "shot-4",
+]);
+export const asset = (name) => {
+  const id = String(name || "").replace(/\.(png|svg)$/i, "");
+  // Old sample images are not served. Legacy references use synthetic illustrations.
+  return `${import.meta.env.BASE_URL}assets/${illustrations.has(id) ? id : "portrait"}.svg`;
+};
 export const initialProject = {
   id: "sample",
   name: "灯塔来信",
@@ -7,7 +21,7 @@ export const initialProject = {
   ratio: "9:16",
   duration: "15",
   summary: "海边小镇的邮差，收到了一封来自明天的信。",
-  updated: "框架示例",
+  updated: "创作示例",
 };
 export const initialRole = {
   id: "zhiyou",
@@ -131,4 +145,4 @@ export const lessons = [
   },
 ];
 export const demoAnalysis =
-  "示例流程 · 灯塔来信\n\n可见事实\n角色沿海堤前行、查看信封、抬头看向灯塔。此内容是框架演示，未执行真实 AI 分析。\n\n可能的制作流程（推测）\n人物与场景设定 → 四镜静帧 → 动画生成 → 声音与剪辑 → 一致性验片。\n\n可复用的方法\n用信封特写交代线索，再用人物近景承接反应。固定风衣、邮包与拿信的手。\n\n不确定项\n采样帧不能确认音频、精确切点、原始提示词、模型与成本。";
+  "示例流程 · 灯塔来信\n\n可见事实\n角色沿海堤前行、查看信封、抬头看向灯塔。此内容是虚构示例，未执行真实 AI 分析。\n\n可能的制作流程（推测）\n人物与场景设定 → 四镜静帧 → 动画生成 → 声音与剪辑 → 一致性验片。\n\n可复用的方法\n用信封特写交代线索，再用人物近景承接反应。固定风衣、邮包与拿信的手。\n\n不确定项\n采样帧不能确认音频、精确切点、原始提示词、模型与成本。";

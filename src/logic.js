@@ -1,17 +1,3 @@
-export function buildPrompt({
-  idea,
-  role,
-  style,
-  ratio,
-  duration,
-  mode,
-  instruction = "",
-}) {
-  const identity = role
-    ? `角色：${role.name}。${role.appearance}\n锁定特征：${role.locked}\n避免：${role.negative}`
-    : "请按输入设计角色，不臆造已有角色资料。";
-  return `任务：${mode}。\n原始想法：${idea}\n修改要求：${instruction || "增强可执行性，保持原意"}\n风格：${style}；画幅：${ratio}；时长：${duration}秒。\n${identity}\n请用中文输出可直接使用的提示词。分清主体、空间、动作顺序、镜头、声音与负向约束。不得声称已生成视频。`;
-}
 export function demoPrompt({
   idea,
   role,
@@ -20,7 +6,12 @@ export function demoPrompt({
   duration,
   mode,
   instruction = "",
+  previous = "",
 }) {
+  if (previous.trim()) {
+    const draft = previous.split("\n\n本轮模板修改要求\n")[0];
+    return `${draft}\n\n本轮模板修改要求\n${instruction || "复核当前版本中的动作顺序和相邻镜头的衔接。"}`;
+  }
   const beats = idea
     .split(/[。！\n]/)
     .map((x) => x.trim())
@@ -35,7 +26,9 @@ export function validateProject(data) {
     !Array.isArray(data.roles) ||
     !Array.isArray(data.shots)
   )
-    throw new Error("文件格式不正确，请选择漫序 Studio 导出的 JSON 文件。");
+    throw new Error(
+      "文件格式不正确，请选择漫序 Studio 导出的加密文件或旧版 JSON 备份。",
+    );
   if (
     data.projects.length > 100 ||
     data.roles.length > 100 ||
@@ -83,8 +76,9 @@ export function validateProject(data) {
       delete role.image;
     return role;
   });
-  const shots = data.shots.map((p) => ({
-    ...allowed(p, [
+  const shots = data.shots.map((p) => {
+    if (!p || typeof p.id !== "string") throw new Error("分镜资料缺少编号。");
+    const shot = allowed(p, [
       "id",
       "number",
       "title",
@@ -94,14 +88,43 @@ export function validateProject(data) {
       "action",
       "audio",
       "image",
-    ]),
-    duration: Math.max(1, Math.min(120, Number(p.duration) || 3)),
-  }));
+    ]);
+    if (
+      shot.image &&
+      !/^(data:image\/(png|jpeg|webp);base64,|[a-z0-9-]+\.(png|svg)$)/i.test(
+        shot.image,
+      )
+    )
+      delete shot.image;
+    return {
+      ...shot,
+      duration: Math.max(1, Math.min(120, Number(p.duration) || 3)),
+    };
+  });
+  const history = Array.isArray(data.history)
+    ? data.history
+        .slice(0, 30)
+        .filter(
+          (entry) =>
+            entry &&
+            typeof entry.text === "string" &&
+            typeof entry.id === "string",
+        )
+        .map((entry) => ({
+          ...allowed(entry, ["id", "text", "date", "mode"]),
+          demo: !!entry.demo,
+        }))
+    : [];
   return {
     ...data,
     projects,
     roles,
     shots,
+    history,
+    referenceReport:
+      typeof data.referenceReport === "string"
+        ? data.referenceReport.slice(0, 40000)
+        : "",
     prompt: typeof data.prompt === "string" ? data.prompt.slice(0, 40000) : "",
   };
 }
